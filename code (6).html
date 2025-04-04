@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Slideshow Viewer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --primary-hover: #0056b3;
+            --light-gray: #f8f9fa;
+            --dark-gray: #343a40;
+            --border-color: #dee2e6;
+            --viewer-bg: #ffffff;
+            --shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+
+        html, body {
+            height: 100%;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background-color: var(--light-gray);
+            display: flex;
+            flex-direction: column;
+            color: var(--dark-gray);
+            overflow: hidden; /* Prevent body scrollbars when content fits */
+        }
+
+        #app-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            box-sizing: border-box;
+            flex-grow: 1; /* Takes remaining vertical space */
+            overflow: hidden; /* Prevent internal scrollbars unless needed */
+             height: 100%;
+        }
+
+        #file-input-container {
+            margin-bottom: 15px;
+            padding: 15px;
+            background-color: var(--viewer-bg);
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            text-align: center;
+        }
+
+         #file-input-container label,
+         #file-input-container input {
+            display: inline-block;
+            vertical-align: middle;
+         }
+
+         #file-input-container label {
+            margin-right: 10px;
+         }
+
+        #pdf-viewer-container {
+            position: relative;
+            width: 90%;
+            max-width: 900px; /* Max width for the viewer */
+            flex-grow: 1; /* Allows viewer to take up space */
+            display: flex; /* Use flexbox for centering canvas */
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 20px;
+            overflow: hidden; /* Hide canvas overflow if aspect ratio differs */
+            background-color: var(--viewer-bg);
+            box-shadow: var(--shadow);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        #pdf-canvas {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain; /* Scale down to fit container */
+            display: block; /* Remove extra space below canvas */
+             border-radius: 8px; /* Match container */
+        }
+
+        .nav-overlay {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 50%;
+            cursor: pointer;
+            /* background-color: rgba(255, 0, 0, 0.1);  For debugging */
+            z-index: 10; /* Above canvas */
+        }
+        #nav-overlay-left { left: 0; }
+        #nav-overlay-right { right: 0; }
+
+        /* Subtle visual feedback for click areas */
+        .nav-overlay:hover::after {
+            content: '';
+            position: absolute;
+            top: 0; bottom: 0;
+            width: 50px; /* Width of the arrow indicator */
+            background: linear-gradient(to right, rgba(0,0,0,0.1), transparent);
+            opacity: 0.5;
+            pointer-events: none; /* Don't block clicks */
+        }
+         #nav-overlay-left:hover::after {
+             left: 0;
+             background: linear-gradient(to right, rgba(0,0,0,0.2), transparent);
+         }
+         #nav-overlay-right:hover::after {
+            right: 0;
+             background: linear-gradient(to left, rgba(0,0,0,0.2), transparent);
+         }
+
+
+        #controls {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            padding: 10px 15px;
+            background-color: var(--viewer-bg);
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+            flex-shrink: 0; /* Prevent controls shrinking */
+        }
+
+        #controls button, #controls input, #controls span {
+            padding: 8px 12px;
+            border-radius: 5px;
+            border: 1px solid var(--border-color);
+            font-size: 1rem;
+            background-color: #fff;
+            cursor: pointer;
+            transition: background-color 0.2s ease, border-color 0.2s ease;
+        }
+
+        #controls button {
+            background-color: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        #controls button:hover:not(:disabled) {
+            background-color: var(--primary-hover);
+            border-color: var(--primary-hover);
+        }
+
+        #controls button:disabled {
+            background-color: #cccccc;
+            border-color: #cccccc;
+            cursor: not-allowed;
+            opacity: 0.7;
+        }
+
+        #page-num-input {
+            width: 50px;
+            text-align: center;
+            margin: 0 5px;
+        }
+
+        #page-info {
+            min-width: 80px;
+            text-align: center;
+            background-color: var(--light-gray);
+            font-weight: 500;
+        }
+
+        /* Fullscreen Specific Styles */
+        #app-container:fullscreen {
+            padding: 0;
+            background-color: #000; /* Black background in fullscreen */
+             width: 100%;
+             height: 100%;
+            /* Ensure container takes full screen */
+        }
+
+        #app-container:fullscreen #pdf-viewer-container {
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            margin: 0;
+            border: none;
+            box-shadow: none;
+            border-radius: 0;
+            background-color: #000; /* Match app container */
+        }
+
+         #app-container:fullscreen #pdf-canvas {
+             border-radius: 0;
+         }
+
+        #app-container:fullscreen #file-input-container,
+        #app-container:fullscreen #controls {
+            display: none; /* Hide controls and file input in fullscreen */
+        }
+
+         /* Ensure overlays work in fullscreen */
+         #app-container:fullscreen .nav-overlay {
+            width: 40%; /* Make click areas slightly smaller in fullscreen */
+         }
+         #app-container:fullscreen #nav-overlay-left { left: 0; }
+         #app-container:fullscreen #nav-overlay-right { right: 0; }
+         #app-container:fullscreen .nav-overlay:hover::after { display: none; } /* Hide hover indicators in fullscreen */
+
+        .hidden {
+            display: none;
+        }
+
+        #error-message {
+            color: red;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div id="app-container">
+        <div id="file-input-container">
+            <label for="pdf-file">Choose PDF File:</label>
+            <input type="file" id="pdf-file" accept="application/pdf">
+            <div id="error-message" class="hidden"></div>
+        </div>
+
+        <div id="pdf-viewer-container" class="hidden">
+            <canvas id="pdf-canvas"></canvas>
+            <div id="nav-overlay-left" class="nav-overlay"></div>
+            <div id="nav-overlay-right" class="nav-overlay"></div>
+        </div>
+
+        <div id="controls" class="hidden">
+            <button id="prev-page" title="Previous Page (Left Arrow)">◀</button>
+            <span id="page-info">-- / --</span>
+            <button id="next-page" title="Next Page (Right Arrow)">▶</button>
+
+            <input type="number" id="page-num-input" min="1">
+            <button id="goto-page">Go</button>
+
+            <button id="fullscreen-btn" title="Toggle Fullscreen (F)">Fullscreen</button>
+        </div>
+    </div>
+
+    <script>
+        // Set worker source - IMPORTANT!
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+
+        const fileInput = document.getElementById('pdf-file');
+        const viewerContainer = document.getElementById('pdf-viewer-container');
+        const canvas = document.getElementById('pdf-canvas');
+        const ctx = canvas.getContext('2d');
+        const controls = document.getElementById('controls');
+        const prevPageBtn = document.getElementById('prev-page');
+        const nextPageBtn = document.getElementById('next-page');
+        const pageInfo = document.getElementById('page-info');
+        const pageNumInput = document.getElementById('page-num-input');
+        const gotoPageBtn = document.getElementById('goto-page');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const navOverlayLeft = document.getElementById('nav-overlay-left');
+        const navOverlayRight = document.getElementById('nav-overlay-right');
+        const appContainer = document.getElementById('app-container');
+        const errorMessage = document.getElementById('error-message');
+
+        let pdfDoc = null;
+        let currentPageNum = 1;
+        let totalPages = 0;
+        let isRendering = false;
+        let pageNumPending = null;
+        let currentScale = 1.5; // Initial scale factor
+
+        function showError(message) {
+            errorMessage.textContent = message;
+            errorMessage.classList.remove('hidden');
+            // Hide viewer and controls if error occurs during load
+            viewerContainer.classList.add('hidden');
+            controls.classList.add('hidden');
+        }
+
+        function clearError() {
+            errorMessage.textContent = '';
+            errorMessage.classList.add('hidden');
+        }
+
+        async function renderPage(num) {
+            if (!pdfDoc) return;
+            isRendering = true;
+            document.body.style.cursor = 'wait'; // Indicate loading
+
+            try {
+                const page = await pdfDoc.getPage(num);
+
+                // Calculate scale to fit container width while respecting max canvas dimension limits
+                const desiredWidth = viewerContainer.clientWidth * 0.98; // Use slightly less than full width
+                const viewportDefault = page.getViewport({ scale: 1.0 });
+                const scale = desiredWidth / viewportDefault.width;
+                const viewport = page.getViewport({ scale: scale });
+
+                 // Check if calculated height exceeds container height and rescale if needed
+                if (viewport.height > viewerContainer.clientHeight * 0.98) {
+                    const scaleHeight = (viewerContainer.clientHeight * 0.98) / viewportDefault.height;
+                    const finalScale = Math.min(scale, scaleHeight); // Choose the smaller scale to fit both
+                    const finalViewport = page.getViewport({ scale: finalScale });
+                     canvas.height = finalViewport.height;
+                     canvas.width = finalViewport.width;
+                      await page.render({ canvasContext: ctx, viewport: finalViewport }).promise;
+                } else {
+                     canvas.height = viewport.height;
+                     canvas.width = viewport.width;
+                     await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                }
+
+
+                currentPageNum = num;
+                updateUI();
+
+            } catch (error) {
+                console.error('Error rendering page:', error);
+                showError(`Error rendering page ${num}: ${error.message}`);
+            } finally {
+                isRendering = false;
+                document.body.style.cursor = 'default';
+                if (pageNumPending !== null) {
+                    renderPage(pageNumPending);
+                    pageNumPending = null;
+                }
+            }
+        }
+
+        function queueRenderPage(num) {
+            if (isRendering) {
+                pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        function updateUI() {
+            if (!pdfDoc) return;
+            pageInfo.textContent = `${currentPageNum} / ${totalPages}`;
+            pageNumInput.value = currentPageNum;
+            pageNumInput.max = totalPages;
+            prevPageBtn.disabled = currentPageNum <= 1;
+            nextPageBtn.disabled = currentPageNum >= totalPages;
+            gotoPageBtn.disabled = totalPages === 0;
+
+            // Update fullscreen button text
+            const isCurrentlyFullscreen = document.fullscreenElement === appContainer;
+            fullscreenBtn.textContent = isCurrentlyFullscreen ? "Exit Fullscreen" : "Fullscreen";
+
+             // Ensure viewer and controls are visible if a PDF is loaded
+             viewerContainer.classList.remove('hidden');
+             controls.classList.remove('hidden');
+        }
+
+        function onPrevPage() {
+            if (currentPageNum <= 1) return;
+            queueRenderPage(currentPageNum - 1);
+        }
+
+        function onNextPage() {
+            if (currentPageNum >= totalPages) return;
+            queueRenderPage(currentPageNum + 1);
+        }
+
+        function onGoToPage() {
+            const desiredPage = parseInt(pageNumInput.value, 10);
+            if (!isNaN(desiredPage) && desiredPage >= 1 && desiredPage <= totalPages && desiredPage !== currentPageNum) {
+                queueRenderPage(desiredPage);
+            } else {
+                pageNumInput.value = currentPageNum; // Reset if invalid
+            }
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                // Enter fullscreen
+                appContainer.requestFullscreen()
+                    .then(() => {
+                        // Re-render page potentially with adjusted scale for fullscreen
+                        // We might need a slightly different scaling logic in fullscreen
+                        // For now, just re-render with existing logic
+                        queueRenderPage(currentPageNum);
+                    })
+                    .catch(err => {
+                        console.error(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+                         showError("Could not enter fullscreen mode.");
+                    });
+            } else {
+                // Exit fullscreen
+                if (document.exitFullscreen) {
+                    document.exitFullscreen()
+                     .then(() => {
+                           // Re-render after exiting fullscreen
+                           queueRenderPage(currentPageNum);
+                     });
+                }
+            }
+        }
+
+
+        // --- Event Listeners ---
+
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file || file.type !== 'application/pdf') {
+                 showError('Please select a valid PDF file.');
+                // Reset state if a previous PDF was loaded
+                 pdfDoc = null;
+                 currentPageNum = 1;
+                 totalPages = 0;
+                 updateUI();
+                 viewerContainer.classList.add('hidden');
+                 controls.classList.add('hidden');
+                return;
+            }
+            clearError(); // Clear any previous errors
+
+            const fileReader = new FileReader();
+            fileReader.onload = async function() {
+                const typedarray = new Uint8Array(this.result);
+                document.body.style.cursor = 'wait';
+                controls.classList.add('hidden'); // Hide controls during load
+
+                try {
+                     const loadingTask = pdfjsLib.getDocument({ data: typedarray });
+                     pdfDoc = await loadingTask.promise;
+                     totalPages = pdfDoc.numPages;
+                     currentPageNum = 1;
+                     pageNumPending = null; // Reset pending request
+                     isRendering = false; // Reset rendering flag
+                     renderPage(currentPageNum); // Render the first page
+                } catch(error) {
+                    console.error('Error loading PDF:', error);
+                    showError(`Error loading PDF: ${error.message}`);
+                    pdfDoc = null;
+                    totalPages = 0;
+                } finally {
+                     document.body.style.cursor = 'default';
+                     if(pdfDoc) { // Only show controls if load succeeded
+                         controls.classList.remove('hidden');
+                         viewerContainer.classList.remove('hidden');
+                     }
+                     updateUI();
+                }
+            };
+            fileReader.readAsArrayBuffer(file);
+        });
+
+        prevPageBtn.addEventListener('click', onPrevPage);
+        nextPageBtn.addEventListener('click', onNextPage);
+        gotoPageBtn.addEventListener('click', onGoToPage);
+        pageNumInput.addEventListener('keyup', (event) => {
+            if (event.key === 'Enter') {
+                onGoToPage();
+            }
+        });
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
+
+        // Click navigation overlays
+        navOverlayLeft.addEventListener('click', onPrevPage);
+        navOverlayRight.addEventListener('click', onNextPage);
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (event) => {
+            if (!pdfDoc || document.activeElement === pageNumInput) return; // Don't navigate if typing in input
+
+            switch (event.key) {
+                case 'ArrowLeft':
+                    onPrevPage();
+                    break;
+                case 'ArrowRight':
+                    onNextPage();
+                    break;
+                 case 'f': // Allow 'f' key for fullscreen toggle
+                 case 'F':
+                     toggleFullscreen();
+                     break;
+                 case 'Escape': // Browser default handles exiting fullscreen
+                    // Optional: if you want custom logic when ESC is pressed
+                    // if (document.fullscreenElement) { updateUI(); }
+                     break;
+            }
+        });
+
+         // Listen for fullscreen changes (e.g., user pressing ESC)
+        document.addEventListener('fullscreenchange', () => {
+            updateUI(); // Update button text
+            // Re-render when fullscreen state changes to potentially adjust scaling
+             if (pdfDoc && !isRendering) {
+                 // Small delay to allow browser layout adjustments
+                 setTimeout(() => queueRenderPage(currentPageNum), 50);
+             }
+        });
+
+        // Optional: Adjust canvas size on window resize
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+             clearTimeout(resizeTimeout);
+             resizeTimeout = setTimeout(() => {
+                 if (pdfDoc && !isRendering) {
+                    console.log("Window resized, re-rendering page.")
+                     queueRenderPage(currentPageNum); // Re-render the current page with new dimensions
+                 }
+             }, 250); // Debounce resize event
+        });
+
+        // Initial UI state
+        updateUI();
+
+    </script>
+</body>
+</html>
